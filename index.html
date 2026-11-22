@@ -249,6 +249,7 @@
       addLog(`[Web -> CLI] ${prompt}`, "user");
       input.value = "";
       sendBtn.disabled = true;
+      sendBtn.textContent = "Thinking...";
 
       try {
         const res = await fetch(`${base}/prompt`, {
@@ -266,6 +267,7 @@
         addLog(`[Network Error] ${err.message}`, "system");
       } finally {
         sendBtn.disabled = false;
+        sendBtn.textContent = "Send";
         input.focus();
       }
     });

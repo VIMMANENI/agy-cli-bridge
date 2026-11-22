@@ -53,17 +53,17 @@ async function runTests() {
     assert.equal(corsRes.headers.get("access-control-allow-private-network"), "true");
     console.log("PASS 4: OPTIONS /prompt CORS + Private Network Access preflight");
 
-    // 5. Valid POST /prompt
+    // 5. Valid POST /prompt (live agy CLI when installed)
     const promptRes = await fetch(`${BASE}/prompt`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders },
-      body: JSON.stringify({ prompt: "Automated test prompt" }),
+      body: JSON.stringify({ prompt: "Reply with only the single word: PONG" }),
     });
     assert.equal(promptRes.status, 200);
     const promptData = await promptRes.json();
     assert.equal(promptData.ok, true);
-    assert.ok(promptData.reply.includes("Automated test prompt"));
-    console.log("PASS 5: POST /prompt valid round-trip");
+    assert.ok(typeof promptData.reply === "string" && promptData.reply.length > 0);
+    console.log(`PASS 5: POST /prompt valid round-trip (mode=${promptData.mode}): ${promptData.reply}`);
 
     // 6. Missing prompt -> 400
     const emptyRes = await fetch(`${BASE}/prompt`, {

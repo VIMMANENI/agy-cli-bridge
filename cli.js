@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import http from "node:http";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline";
@@ -10,15 +11,28 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4310);
 const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || "";
 
-// Check whether the official `agy` CLI is available on PATH
-function hasAgyCli() {
-  const check = spawnSync(process.platform === "win32" ? "where" : "which", ["agy"], {
-    stdio: "ignore",
-  });
-  return check.status === 0;
+// Locate the official `agy` CLI on PATH or standard install locations
+function findAgyBinary() {
+  if (process.env.AGY_BIN && fs.existsSync(process.env.AGY_BIN)) {
+    return process.env.AGY_BIN;
+  }
+  const cmd = process.platform === "win32" ? "where" : "which";
+  const check = spawnSync(cmd, ["agy"], { encoding: "utf8" });
+  if (check.status === 0 && check.stdout.trim()) {
+    return check.stdout.trim().split(/\r?\n/)[0].trim();
+  }
+  const candidates =
+    process.platform === "win32"
+      ? [path.join(process.env.LOCALAPPDATA || "", "agy", "bin", "agy.exe")]
+      : [path.join(os.homedir(), ".local", "bin", "agy")];
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
-const agyAvailable = hasAgyCli();
+const agyBinary = findAgyBinary();
+const agyAvailable = Boolean(agyBinary);
 const sseClients = new Set();
 
 function broadcast(event, payload) {
@@ -30,8 +44,9 @@ function broadcast(event, payload) {
 
 function runAgyPrompt(prompt) {
   return new Promise((resolve, reject) => {
-    const child = spawn("agy", ["-p", prompt, "--output-format", "text"], {
-      shell: process.platform === "win32",
+    const child = spawn(agyBinary, ["-p", prompt, "--output-format", "text"], {
+      shell: false,
+      windowsHide: true,
     });
 
     let stdout = "";
@@ -50,7 +65,7 @@ function runAgyPrompt(prompt) {
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) resolve(stdout.trim());
-      else reject(new Error(stderr.trim() || `agy exited with code ${code}`));
+      else reject(new Error(stderr.trim() || stdout.trim() || `agy exited with code ${code}`));
     });
   });
 }
