@@ -1,0 +1,12 @@
+{
+  "name": "agy-cli-bridge",
+  "version": "0.1.0",
+  "description": "Minimal Antigravity CLI bridge for interacting with a web application",
+  "type": "module",
+  "bin": {
+    "agy-bridge": "./cli.js"
+  },
+  "scripts": {
+    "start": "node cli.js"
+  }
+}
