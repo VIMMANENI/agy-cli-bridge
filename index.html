@@ -20,7 +20,7 @@
       max-width: 720px;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 14px;
     }
     header {
       display: flex;
@@ -43,13 +43,43 @@
       border-color: #238636;
       color: #3fb950;
     }
+    .badge.error {
+      background: #3d1418;
+      border-color: #f85149;
+      color: #ff7b72;
+    }
+    .bar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .bar input {
+      padding: 7px 10px;
+      border-radius: 6px;
+      border: 1px solid #30363d;
+      background: #161b22;
+      color: #e6edf3;
+      font-size: 12px;
+    }
+    #bridge-url { flex: 2; min-width: 200px; }
+    #bridge-token { flex: 1; min-width: 120px; }
+    .btn-secondary {
+      padding: 7px 12px;
+      border-radius: 6px;
+      border: 1px solid #30363d;
+      background: #21262d;
+      color: #e6edf3;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .btn-secondary:hover { background: #30363d; }
     #log {
       background: #161b22;
       border: 1px solid #30363d;
       border-radius: 8px;
       padding: 16px;
       min-height: 280px;
-      max-height: 460px;
+      max-height: 440px;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
@@ -82,11 +112,11 @@
       color: #e6edf3;
       font-size: 14px;
     }
-    input[type="text"]:focus {
+    input:focus {
       outline: none;
       border-color: #58a6ff;
     }
-    button {
+    button[type="submit"] {
       padding: 10px 18px;
       border-radius: 6px;
       border: 1px solid #238636;
@@ -96,7 +126,7 @@
       font-weight: 600;
       cursor: pointer;
     }
-    button:hover { background: #2ea043; }
+    button[type="submit"]:hover { background: #2ea043; }
     button:disabled { opacity: 0.6; cursor: not-allowed; }
   </style>
 </head>
@@ -106,6 +136,12 @@
       <h1>Antigravity CLI Bridge</h1>
       <span id="status" class="badge">Connecting...</span>
     </header>
+
+    <div class="bar">
+      <input id="bridge-url" type="url" placeholder="CLI Bridge URL (e.g. http://127.0.0.1:4310)" />
+      <input id="bridge-token" type="password" placeholder="Optional token" />
+      <button id="connect-btn" class="btn-secondary" type="button">Reconnect</button>
+    </div>
 
     <div id="log"></div>
 
@@ -127,6 +163,22 @@
     const form = document.getElementById("prompt-form");
     const input = document.getElementById("prompt-input");
     const sendBtn = document.getElementById("send-btn");
+    const bridgeUrlInput = document.getElementById("bridge-url");
+    const bridgeTokenInput = document.getElementById("bridge-token");
+    const connectBtn = document.getElementById("connect-btn");
+
+    const params = new URLSearchParams(window.location.search);
+    const isLocalOrigin = ["127.0.0.1", "localhost"].includes(window.location.hostname);
+    const initialUrl =
+      params.get("bridge") ||
+      localStorage.getItem("agy_bridge_url") ||
+      (isLocalOrigin ? window.location.origin : "http://127.0.0.1:4310");
+    const initialToken = params.get("token") || localStorage.getItem("agy_bridge_token") || "";
+
+    bridgeUrlInput.value = initialUrl.replace(/\/+$/, "");
+    bridgeTokenInput.value = initialToken;
+
+    let eventSource = null;
 
     function addLog(text, type = "system") {
       const div = document.createElement("div");
@@ -136,46 +188,79 @@
       logEl.scrollTop = logEl.scrollHeight;
     }
 
-    // Check health
-    fetch("/health")
-      .then((r) => r.json())
-      .then((data) => {
-        statusEl.textContent = `Connected (${data.mode})`;
-        statusEl.classList.add("connected");
-        addLog(`CLI bridge ready — mode: ${data.mode}, agyInstalled: ${data.agyInstalled}`, "system");
-      })
-      .catch((err) => {
-        statusEl.textContent = "Disconnected";
-        addLog(`Health check failed: ${err.message}`, "system");
-      });
+    function getBridgeBase() {
+      return bridgeUrlInput.value.trim().replace(/\/+$/, "");
+    }
 
-    // Subscribe to live CLI -> Web SSE events
-    const events = new EventSource("/events");
-    events.addEventListener("cli-message", (e) => {
-      const data = JSON.parse(e.data);
-      addLog(`[CLI broadcast] ${data.message}`, "cli");
-    });
+    function getAuthHeaders() {
+      const token = bridgeTokenInput.value.trim();
+      return token ? { Authorization: `Bearer ${token}` } : {};
+    }
+
+    function connectBridge() {
+      const base = getBridgeBase();
+      const token = bridgeTokenInput.value.trim();
+      localStorage.setItem("agy_bridge_url", base);
+      localStorage.setItem("agy_bridge_token", token);
+
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+
+      statusEl.textContent = "Connecting...";
+      statusEl.className = "badge";
+
+      fetch(`${base}/health`, { headers: getAuthHeaders() })
+        .then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        })
+        .then((data) => {
+          statusEl.textContent = `Connected (${data.mode})`;
+          statusEl.className = "badge connected";
+          addLog(`CLI bridge ready at ${base} — mode: ${data.mode}, agyInstalled: ${data.agyInstalled}`, "system");
+
+          const eventsUrl = token
+            ? `${base}/events?token=${encodeURIComponent(token)}`
+            : `${base}/events`;
+          eventSource = new EventSource(eventsUrl);
+          eventSource.addEventListener("cli-message", (e) => {
+            const payload = JSON.parse(e.data);
+            addLog(`[CLI broadcast] ${payload.message}`, "cli");
+          });
+        })
+        .catch((err) => {
+          statusEl.textContent = "Disconnected";
+          statusEl.className = "badge error";
+          addLog(`Failed to reach ${base}: ${err.message}`, "system");
+        });
+    }
+
+    connectBtn.addEventListener("click", connectBridge);
+    connectBridge();
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const prompt = input.value.trim();
       if (!prompt) return;
 
+      const base = getBridgeBase();
       addLog(`[Web -> CLI] ${prompt}`, "user");
       input.value = "";
       sendBtn.disabled = true;
 
       try {
-        const res = await fetch("/prompt", {
+        const res = await fetch(`${base}/prompt`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({ prompt }),
         });
         const data = await res.json();
-        if (data.ok) {
+        if (res.ok && data.ok) {
           addLog(`[CLI -> Web] ${data.reply}`, "cli");
         } else {
-          addLog(`[Error] ${data.error}`, "system");
+          addLog(`[Error ${res.status}] ${data.error || "Request failed"}`, "system");
         }
       } catch (err) {
         addLog(`[Network Error] ${err.message}`, "system");

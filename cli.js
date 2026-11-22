@@ -8,6 +8,7 @@ import { spawn, spawnSync } from "node:child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4310);
+const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || "";
 
 // Check whether the official `agy` CLI is available on PATH
 function hasAgyCli() {
@@ -57,7 +58,15 @@ function runAgyPrompt(prompt) {
 function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+}
+
+function isAuthorized(req, urlObj) {
+  if (!BRIDGE_TOKEN) return true;
+  const auth = req.headers.authorization || "";
+  if (auth === `Bearer ${BRIDGE_TOKEN}`) return true;
+  if (urlObj.searchParams.get("token") === BRIDGE_TOKEN) return true;
+  return false;
 }
 
 function readJson(req) {
@@ -68,6 +77,7 @@ function readJson(req) {
       try {
         resolve(body ? JSON.parse(body) : {});
       } catch (err) {
+        err.statusCode = 400;
         reject(err);
       }
     });
@@ -84,22 +94,33 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const urlObj = new URL(req.url, `http://${req.headers.host || "127.0.0.1"}`);
+  const pathname = urlObj.pathname;
+
   // 0. Minimal test web UI
-  if (req.method === "GET" && (req.url === "/" || req.url === "/index.html")) {
+  if (req.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
     const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(html);
     return;
   }
 
+  // Auth check for API endpoints when BRIDGE_TOKEN is configured
+  if (!isAuthorized(req, urlObj)) {
+    res.writeHead(401, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: "Unauthorized" }));
+    return;
+  }
+
   // 1. Health check
-  if (req.method === "GET" && req.url === "/health") {
+  if (req.method === "GET" && pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(
       JSON.stringify({
         ok: true,
         agyInstalled: agyAvailable,
         mode: agyAvailable ? "agy" : "mock-echo",
+        authRequired: Boolean(BRIDGE_TOKEN),
         clients: sseClients.size,
       })
     );
@@ -107,7 +128,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 2. Live SSE stream (CLI -> Web App)
-  if (req.method === "GET" && req.url === "/events") {
+  if (req.method === "GET" && pathname === "/events") {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -127,10 +148,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 3. Receive prompt from Web App -> run via CLI -> return response
-  if (req.method === "POST" && req.url === "/prompt") {
+  if (req.method === "POST" && pathname === "/prompt") {
     try {
       const { prompt } = await readJson(req);
-      if (!prompt || typeof prompt !== "string") {
+      if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "Missing 'prompt' string" }));
         return;
@@ -159,7 +180,8 @@ const server = http.createServer(async (req, res) => {
         })
       );
     } catch (err) {
-      res.writeHead(500, { "Content-Type": "application/json" });
+      const status = err.statusCode === 400 ? 400 : 500;
+      res.writeHead(status, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: false, error: err.message }));
     }
     return;
