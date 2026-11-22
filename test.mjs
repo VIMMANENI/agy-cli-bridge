@@ -46,11 +46,12 @@ async function runTests() {
     assert.ok(html.includes("Antigravity CLI Bridge"), "index.html should render title");
     console.log("PASS 3: GET / serves index.html");
 
-    // 4. CORS preflight
+    // 4. CORS + Private Network Access preflight (required for deployed HTTPS -> localhost)
     const corsRes = await fetch(`${BASE}/prompt`, { method: "OPTIONS" });
     assert.equal(corsRes.status, 204);
     assert.equal(corsRes.headers.get("access-control-allow-origin"), "*");
-    console.log("PASS 4: OPTIONS /prompt CORS preflight");
+    assert.equal(corsRes.headers.get("access-control-allow-private-network"), "true");
+    console.log("PASS 4: OPTIONS /prompt CORS + Private Network Access preflight");
 
     // 5. Valid POST /prompt
     const promptRes = await fetch(`${BASE}/prompt`, {
